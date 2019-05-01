@@ -128,14 +128,14 @@ class AgentDQN(Agent):
         episodes_done_num = 0 # passed episodes
         total_reward = 0 # compute average reward
         loss = 0 
-        while(True):
+        while True:
             state = self.env.reset()
             # State: (80,80,4) --> (1,4,80,80)
             state = torch.from_numpy(state).permute(2,0,1).unsqueeze(0)
             state = state.cuda() if use_cuda else state
             
             done = False
-            while(not done):
+            while not done:
                 # select and perform action
                 action = self.make_action(state)
                 next_state, reward, done, _ = self.env.step(action[0, 0].data.item())
