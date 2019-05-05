@@ -5,11 +5,14 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.nn as nn
+import ipdb
 
 from agent_dir.agent import Agent
 from environment import Environment
+from collections import namedtuple
 
 use_cuda = torch.cuda.is_available()
+
 
 class DQN(nn.Module):
     '''
@@ -26,7 +29,6 @@ class DQN(nn.Module):
         self.relu = nn.ReLU()
         self.lrelu = nn.LeakyReLU(0.01)
 
-
     def forward(self, x):
         x = self.relu(self.conv1(x))
         x = self.relu(self.conv2(x))
@@ -35,6 +37,32 @@ class DQN(nn.Module):
         q = self.head(x)
         return q
 
+
+Transition = namedtuple('Transition',
+                        ('state', 'action', 'reward', 'next_state'))
+
+
+class ReplayMemory(object):
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.memory = []
+        self.position = 0
+
+    def push(self, *args):
+        """Saves a transition."""
+        if len(self.memory) < self.capacity:
+            self.memory.append(None)
+        self.memory[self.position] = Transition(*args)
+        self.position = (self.position + 1) % self.capacity
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self):
+        return len(self.memory)
+
+
 class AgentDQN(Agent):
     def __init__(self, env, args):
         self.env = env
@@ -42,6 +70,7 @@ class AgentDQN(Agent):
         self.num_actions = self.env.action_space.n
         # TODO:
         # Initialize your replay buffer
+        self.memory = ReplayMemory(10000)
 
         # build target, online network
         self.target_net = DQN(self.input_channels, self.num_actions)
@@ -56,19 +85,18 @@ class AgentDQN(Agent):
         self.GAMMA = 0.99 
         
         # training hyperparameters
-        self.train_freq = 4 # frequency to train the online network
-        self.learning_start = 10000 # before we start to update our network, we wait a few steps first to fill the replay.
+        self.train_freq = 4             # frequency to train the online network
+        self.learning_start = 10000     # before we start to update, we wait a few steps first to fill the replay.
         self.batch_size = 32
-        self.num_timesteps = 3000000 # total training steps
-        self.display_freq = 10 # frequency to display training progress
-        self.save_freq = 200000 # frequency to save the model
-        self.target_update_freq = 1000 # frequency to update target network
+        self.num_timesteps = 3000000    # total training steps
+        self.display_freq = 10          # frequency to display training progress
+        self.save_freq = 200000         # frequency to save the model
+        self.target_update_freq = 1000  # frequency to update target network
 
         # optimizer
         self.optimizer = optim.RMSprop(self.online_net.parameters(), lr=1e-4)
 
-        self.steps = 0 # num. of passed steps. this may be useful in controlling exploration
-
+        self.steps = 0  # num. of passed steps. this may be useful in controlling exploration
 
     def save(self, save_path):
         print('save model to', save_path)
@@ -89,34 +117,69 @@ class AgentDQN(Agent):
         pass
     
     def make_action(self, state, test=False):
+
+        if test:
+            state = torch.from_numpy(state).permute(2, 0, 1).unsqueeze(0)
+            state = state.cuda() if use_cuda else state
+            actions_value = self.target_net.forward(state).detach()
+            action = actions_value.max(1)[1].item()
+            return action
+
         # TODO:
-        # At first, you decide whether you want to explore the environemnt
+        # At first, you decide whether you want to explore the environment
+        EPS_START = 0.9
+        EPS_END = 0.05
+        EPS_DECAY = 200
+        sample = random.random()
+        eps_threshold = EPS_END + (EPS_START - EPS_END) * math.exp(-1. * self.steps / EPS_DECAY)
 
         # TODO:
         # if explore, you randomly samples one action
         # else, use your model to predict action
+        if sample > eps_threshold:
+            actions_value = self.online_net.forward(state).detach()
+            # actions_value: tensor([[-0.0277,  0.0162,  0.0316, -0.0318, -0.0055, -0.0410,  0.0304]])
+            action = actions_value.max(1)[1].view(1, 1)  # tensor([[2]])
+        else:
+            action = torch.tensor([[random.randrange(self.num_actions)]], dtype=torch.long)
+            action = action.cuda() if use_cuda else action
 
         return action
 
     def update(self):
         # TODO:
         # To update model, we sample some stored experiences as training examples.
+        transitions = self.memory.sample(self.batch_size)
+        batch = Transition(*zip(*transitions))
+        state_batch = torch.cat(batch.state)
+        action_batch = torch.cat(batch.action)
+        reward_batch = torch.cat(batch.reward)
 
         # TODO:
         # Compute Q(s_t, a) with your model.
+        state_action_values = self.online_net(state_batch).gather(1, action_batch)
 
         with torch.no_grad():
             # TODO:
             # Compute Q(s_{t+1}, a) for all next states.
             # Since we do not want to backprop through the expected action values,
             # use torch.no_grad() to stop the gradient from Q(s_{t+1}, a)
+            non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
+                                                    batch.next_state)), dtype=torch.uint8)
+            non_final_mask = non_final_mask.cuda() if use_cuda else non_final_mask
+            non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
+            next_state_values = torch.zeros(self.batch_size)
+            next_state_values = next_state_values.cuda() if use_cuda else next_state_values
+            next_state_values[non_final_mask] = self.target_net(non_final_next_states).max(1)[0]
 
         # TODO:
         # Compute the expected Q values: rewards + gamma * max(Q(s_{t+1}, a))
         # You should carefully deal with gamma * max(Q(s_{t+1}, a)) when it is the terminal state.
+        expected_state_action_values = (next_state_values * self.GAMMA) + reward_batch
 
         # TODO:
         # Compute temporal difference loss
+        loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -125,30 +188,32 @@ class AgentDQN(Agent):
         return loss.item()
 
     def train(self):
-        episodes_done_num = 0 # passed episodes
-        total_reward = 0 # compute average reward
+        episodes_done_num = 0  # passed episodes
+        total_reward = 0  # compute average reward
         loss = 0 
         while True:
             state = self.env.reset()
             # State: (80,80,4) --> (1,4,80,80)
-            state = torch.from_numpy(state).permute(2,0,1).unsqueeze(0)
+            state = torch.from_numpy(state).permute(2, 0, 1).unsqueeze(0)
             state = state.cuda() if use_cuda else state
             
             done = False
             while not done:
                 # select and perform action
                 action = self.make_action(state)
-                next_state, reward, done, _ = self.env.step(action[0, 0].data.item())
+                next_state, reward, done, _ = self.env.step(action.item())
                 total_reward += reward
 
                 # process new state
-                next_state = torch.from_numpy(next_state).permute(2,0,1).unsqueeze(0)
+                next_state = torch.from_numpy(next_state).permute(2, 0, 1).unsqueeze(0)
                 next_state = next_state.cuda() if use_cuda else next_state
                 if done:
                     next_state = None
 
                 # TODO:
                 # store the transition in memory
+                reward = torch.tensor([reward]).cuda() if use_cuda else torch.tensor([reward])
+                self.memory.push(state, action, reward, next_state)
 
                 # move to the next state
                 state = next_state
@@ -168,8 +233,8 @@ class AgentDQN(Agent):
                 self.steps += 1
 
             if episodes_done_num % self.display_freq == 0:
-                print('Episode: %d | Steps: %d/%d | Avg reward: %f | loss: %f '%
-                        (episodes_done_num, self.steps, self.num_timesteps, total_reward / self.display_freq, loss))
+                print('Episode: %d | Steps: %d/%d | Avg reward: %f | loss: %f ' %
+                      (episodes_done_num, self.steps, self.num_timesteps, total_reward / self.display_freq, loss))
                 total_reward = 0
 
             episodes_done_num += 1

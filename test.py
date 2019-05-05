@@ -11,6 +11,7 @@ from environment import Environment
 
 seed = 11037
 
+
 def parse():
     parser = argparse.ArgumentParser(description="MLDS&ADL HW3")
     parser.add_argument('--test_pg', action='store_true', help='whether test policy gradient')
@@ -43,8 +44,10 @@ def test(agent, env, total_episodes=30):
             episode_reward += reward
 
         rewards.append(episode_reward)
+        print('Episode {}, Mean {}'.format(i, np.mean(rewards)))
     print('Run %d episodes'%(total_episodes))
     print('Mean:', np.mean(rewards))
+
 
 def run(args):
     if args.test_pg:
@@ -64,6 +67,7 @@ def run(args):
         from agent_dir.agent_mario import AgentMario
         agent = AgentMario(env, args)
         test(agent, env, total_episodes=10)
+
 
 if __name__ == '__main__':
     args = parse()

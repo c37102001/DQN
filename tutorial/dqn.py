@@ -14,8 +14,8 @@ TARGET_REPLACE_ITER = 100   # target update frequency
 MEMORY_CAPACITY = 2000
 env = gym.make('CartPole-v0')
 env = env.unwrapped
-N_ACTIONS = env.action_space.n
-N_STATES = env.observation_space.shape[0]
+N_ACTIONS = env.action_space.n              # =2
+N_STATES = env.observation_space.shape[0]   # =4
 ENV_A_SHAPE = 0 if isinstance(env.action_space.sample(), int) else env.action_space.sample().shape
 # to confirm the shape
 
@@ -79,14 +79,16 @@ class DQN(object):
         b_s_ = torch.FloatTensor(b_memory[:, -N_STATES:])
 
         # q_eval w.r.t the action in experience
-        q_eval = self.eval_net(b_s).gather(1, b_a)  # shape (batch, 1)
-        q_next = self.target_net(b_s_).detach()     # detach from graph, don't backpropagate
+        q_eval = self.eval_net.forward(b_s).gather(1, b_a)  # shape (batch, 1)
+        # eval_net.forward(b_s): torch(32,2),  b_a: torch(32,1), [[0],[0],[0],...]
+        q_next = self.target_net.forward(b_s_).detach()     # detach from graph, don't backpropagate
         q_target = b_r + GAMMA * q_next.max(1)[0].view(BATCH_SIZE, 1)   # shape (batch, 1)
         loss = self.loss_func(q_eval, q_target)
 
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+
 
 dqn = DQN()
 
