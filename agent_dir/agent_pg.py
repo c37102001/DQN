@@ -42,7 +42,7 @@ class AgentPG(Agent):
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-3)
         
         # saved rewards and actions
-        self.rewards, self.saved_actions, self.saved_log_probs = [], [], []
+        self.rewards, self.action_log_probs = [], []
     
     def save(self, save_path):
         print('save model to', save_path)
@@ -53,7 +53,7 @@ class AgentPG(Agent):
         self.model.load_state_dict(torch.load(load_path))
 
     def init_game_setting(self):
-        self.rewards, self.saved_actions, self.saved_log_probs = [], [], []
+        self.rewards, self.action_log_probs = [], []
 
     def make_action(self, state, test=False):
         # TODO:
@@ -63,30 +63,26 @@ class AgentPG(Agent):
         # state: ndarray array([0.0051,  1.40,  0.519, -0.4636, -0.005, -0.117, 0, 0], dtype=float32)
         state = torch.from_numpy(state).float().unsqueeze(0)
         # state: tensor([[ 0.0051,  1.4005,  0.5199, -0.4637, -0.0059, -0.1178,  0.0000,  0.0000]])
-        probs = self.model.forward(state)
-        # probs: tensor([[0.2631, 0.2631, 0.2166, 0.2573]], grad_fn=<SoftmaxBackward>)
-        m = Categorical(probs)  # Categorical(probs: torch.Size([1, 4]))
-        action = m.sample()     # tensor([2])
-        self.saved_log_probs.append(m.log_prob(action))
+        action_probs = self.model.forward(state)
+        # action_probs: tensor([[0.2631, 0.2631, 0.2166, 0.2573]], grad_fn=<SoftmaxBackward>)
+        action_distributions = Categorical(action_probs)  # Categorical(action_probs: torch.Size([1, 4]))
+        action = action_distributions.sample()     # tensor([2])
+        self.action_log_probs.append(action_distributions.log_prob(action))
         return action.item()
 
     def update(self):
-        R = 0
-        policy_loss = []
-        returns = []
-        eps = np.finfo(np.float32).eps.item()
+        reward, loss, rewards = 0, [], []
         for r in self.rewards[::-1]:  # policy.rewards:[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, ...] for 78
-            R = r + self.gamma * R
-            returns.insert(0, R)
-        returns = torch.tensor(returns)
-        returns = (returns - returns.mean()) / (returns.std() + eps)
-
-        for log_prob, R in zip(self.saved_log_probs, returns):
-            policy_loss.append(-log_prob * R)
-        policy_loss = torch.cat(policy_loss).sum()
-
+            reward = r + self.gamma * reward
+            rewards.append(reward)
+        rewards = rewards[::-1]
+        rewards = torch.tensor(rewards)
+        rewards = (rewards - rewards.mean()) / rewards.std()
+        for log_prob, reward in zip(self.action_log_probs, rewards):
+            loss.append(-log_prob * reward)
+        loss = torch.cat(loss).sum()
         self.optimizer.zero_grad()
-        policy_loss.backward()
+        loss.backward()
         self.optimizer.step()
 
     def train(self):
@@ -103,7 +99,6 @@ class AgentPG(Agent):
                 state, reward, done, _ = self.env.step(action)
                 # (array([0.0154, 1.382, 0.531, -0.3916, -0.0173, -0.1057, 0, 0]), 0.50118 , False, {})
 
-                self.saved_actions.append(action)
                 self.rewards.append(reward)
 
             # for logging 
@@ -113,8 +108,8 @@ class AgentPG(Agent):
             # update model
             self.update()
 
+            # for plotting
             plot_epoch.append(epoch)
-
             rewards_in_ten = np.append(rewards_in_ten, last_reward)
             if len(rewards_in_ten) > 10:
                 rewards_in_ten = np.delete(rewards_in_ten, 0)
