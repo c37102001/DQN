@@ -7,6 +7,7 @@ from agent_dir.agent import Agent
 from environment import Environment
 from torch.distributions import Categorical
 import ipdb
+from matplotlib import pyplot as plt
 
 
 class PolicyNet(nn.Module):
@@ -34,11 +35,11 @@ class AgentPG(Agent):
         self.gamma = 0.99 
         
         # training hyperparameters
-        self.num_episodes = 100000  # total training episodes (actually too large...)
+        self.num_episodes = 10000  # total training episodes (actually too large...)
         self.display_freq = 10  # frequency to display training progress
         
         # optimizer
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=3e-3)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-3)
         
         # saved rewards and actions
         self.rewards, self.saved_actions, self.saved_log_probs = [], [], []
@@ -90,6 +91,9 @@ class AgentPG(Agent):
 
     def train(self):
         avg_reward = None  # moving average of reward
+        rewards_in_ten = np.array([])
+        plot_epoch = []
+        plot_avg_reward = []
         for epoch in range(self.num_episodes):
             state = self.env.reset()
             self.init_game_setting()
@@ -98,7 +102,7 @@ class AgentPG(Agent):
                 action = self.make_action(state)
                 state, reward, done, _ = self.env.step(action)
                 # (array([0.0154, 1.382, 0.531, -0.3916, -0.0173, -0.1057, 0, 0]), 0.50118 , False, {})
-                
+
                 self.saved_actions.append(action)
                 self.rewards.append(reward)
 
@@ -109,9 +113,25 @@ class AgentPG(Agent):
             # update model
             self.update()
 
+            plot_epoch.append(epoch)
+
+            rewards_in_ten = np.append(rewards_in_ten, last_reward)
+            if len(rewards_in_ten) > 10:
+                rewards_in_ten = np.delete(rewards_in_ten, 0)
+            plot_avg_reward.append(rewards_in_ten.mean())
+
             if epoch % self.display_freq == 0:
                 print('Epochs: %d/%d | Avg reward: %f ' % (epoch, self.num_episodes, avg_reward))
             
             if avg_reward > 50:  # to pass baseline, avg. reward > 50 is enough.
                 self.save('pg.cpt')
                 break
+        plt.title('learning curve - pg')
+        plt.xlabel('Epochs')
+        plt.ylabel('Avg rewards in last 10 epochs')
+        plt.plot(plot_epoch, plot_avg_reward)
+        plt.savefig('pg_learning_curve.png')
+
+
+
+
