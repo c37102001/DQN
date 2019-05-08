@@ -64,7 +64,8 @@ class AgentPG(Agent):
         state = torch.from_numpy(state).float().unsqueeze(0)
         # state: tensor([[ 0.0051,  1.4005,  0.5199, -0.4637, -0.0059, -0.1178,  0.0000,  0.0000]])
         action_probs = self.model.forward(state)
-        # action_probs: tensor([[0.2631, 0.2631, 0.2166, 0.2573]], grad_fn=<SoftmaxBackward>)
+        # action_probs: tensor([[
+        # 573]], grad_fn=<SoftmaxBackward>)
         action_distributions = Categorical(action_probs)  # Categorical(action_probs: torch.Size([1, 4]))
         action = action_distributions.sample()     # tensor([2])
         self.action_log_probs.append(action_distributions.log_prob(action))
@@ -121,11 +122,9 @@ class AgentPG(Agent):
             if avg_reward > 50:  # to pass baseline, avg. reward > 50 is enough.
                 self.save('pg.cpt')
                 break
-        plt.title('learning curve - pg')
-        plt.xlabel('Epochs')
-        plt.ylabel('Avg rewards in last 10 epochs')
-        plt.plot(plot_epoch, plot_avg_reward)
-        plt.savefig('pg_learning_curve.png')
+
+        return plot_epoch, plot_avg_reward
+
 
 
 

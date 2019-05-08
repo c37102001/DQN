@@ -10,6 +10,7 @@ import ipdb
 from agent_dir.agent import Agent
 from environment import Environment
 from collections import namedtuple
+from matplotlib import pyplot as plt
 
 use_cuda = torch.cuda.is_available()
 
@@ -38,8 +39,7 @@ class DQN(nn.Module):
         return q
 
 
-Transition = namedtuple('Transition',
-                        ('state', 'action', 'reward', 'next_state'))
+Transition = namedtuple('Transition', ('state', 'action', 'reward', 'next_state'))
 
 
 class ReplayMemory(object):
@@ -49,11 +49,10 @@ class ReplayMemory(object):
         self.memory = []
         self.position = 0
 
-    def push(self, *args):
-        """Saves a transition."""
+    def push(self, state, action, reward, next_state):
         if len(self.memory) < self.capacity:
             self.memory.append(None)
-        self.memory[self.position] = Transition(*args)
+        self.memory[self.position] = Transition(state, action, reward, next_state)
         self.position = (self.position + 1) % self.capacity
 
     def sample(self, batch_size):
@@ -88,15 +87,30 @@ class AgentDQN(Agent):
         self.train_freq = 4             # frequency to train the online network
         self.learning_start = 10000     # before we start to update, we wait a few steps first to fill the replay.
         self.batch_size = 32
-        self.num_timesteps = 3000000    # total training steps
+        self.num_timesteps = 1000000    # total training steps
         self.display_freq = 10          # frequency to display training progress
-        self.save_freq = 200000         # frequency to save the model
+        self.save_freq = 400000         # frequency to save the model
         self.target_update_freq = 1000  # frequency to update target network
 
         # optimizer
         self.optimizer = optim.RMSprop(self.online_net.parameters(), lr=1e-4)
 
         self.steps = 0  # num. of passed steps. this may be useful in controlling exploration
+        # EPS_START = 0.9
+        # EPS_END = 0.05
+        # EPS_DECAY = 200
+        # eps_threshold = EPS_END + (EPS_START - EPS_END) * math.exp(-1. * self.steps / EPS_DECAY)
+        if args.train_dqn_exp:
+            if args.dqn_exp == 0:
+                self.eps_threshold = 0
+            if args.dqn_exp == 1:
+                self.eps_threshold = 0.05
+            if args.dqn_exp == 2:
+                self.eps_threshold = 0.05 * math.exp(-1. * (self.steps-10000) / 5000)
+            if args.dqn_exp == 3:
+                self.eps_threshold = 0.05 + (0.9 - 0.05) * math.exp(-1. * (self.steps-10000) / 5000)
+        else:
+            self.eps_threshold = 0.05
 
     def save(self, save_path):
         print('save model to', save_path)
@@ -121,22 +135,18 @@ class AgentDQN(Agent):
         if test:
             state = torch.from_numpy(state).permute(2, 0, 1).unsqueeze(0)
             state = state.cuda() if use_cuda else state
-            actions_value = self.target_net.forward(state).detach()
+            actions_value = self.online_net.forward(state).detach()
             action = actions_value.max(1)[1].item()
             return action
 
         # TODO:
         # At first, you decide whether you want to explore the environment
-        EPS_START = 0.9
-        EPS_END = 0.05
-        EPS_DECAY = 200
         sample = random.random()
-        eps_threshold = EPS_END + (EPS_START - EPS_END) * math.exp(-1. * self.steps / EPS_DECAY)
 
         # TODO:
         # if explore, you randomly samples one action
         # else, use your model to predict action
-        if sample > eps_threshold:
+        if sample > self.eps_threshold:
             actions_value = self.online_net.forward(state).detach()
             # actions_value: tensor([[-0.0277,  0.0162,  0.0316, -0.0318, -0.0055, -0.0410,  0.0304]])
             action = actions_value.max(1)[1].view(1, 1)  # tensor([[2]])
@@ -155,6 +165,15 @@ class AgentDQN(Agent):
         action_batch = torch.cat(batch.action)
         reward_batch = torch.cat(batch.reward)
 
+        if use_cuda:
+            next_state_values = torch.zeros(self.batch_size).cuda()
+            non_final_mask = torch.tensor(tuple(map(lambda s: s is not None, batch.next_state)), dtype=torch.uint8).cuda()
+            non_final_next_states = torch.cat([s for s in batch.next_state if s is not None]).cuda()
+        else:
+            next_state_values = torch.zeros(self.batch_size)
+            non_final_mask = torch.tensor(tuple(map(lambda s: s is not None, batch.next_state)), dtype=torch.uint8)
+            non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
+
         # TODO:
         # Compute Q(s_t, a) with your model.
         state_action_values = self.online_net(state_batch).gather(1, action_batch)
@@ -164,12 +183,6 @@ class AgentDQN(Agent):
             # Compute Q(s_{t+1}, a) for all next states.
             # Since we do not want to backprop through the expected action values,
             # use torch.no_grad() to stop the gradient from Q(s_{t+1}, a)
-            non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
-                                                    batch.next_state)), dtype=torch.uint8)
-            non_final_mask = non_final_mask.cuda() if use_cuda else non_final_mask
-            non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
-            next_state_values = torch.zeros(self.batch_size)
-            next_state_values = next_state_values.cuda() if use_cuda else next_state_values
             next_state_values[non_final_mask] = self.target_net(non_final_next_states).max(1)[0]
 
         # TODO:
@@ -180,17 +193,20 @@ class AgentDQN(Agent):
         # TODO:
         # Compute temporal difference loss
         loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
-
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-
         return loss.item()
 
     def train(self):
         episodes_done_num = 0  # passed episodes
         total_reward = 0  # compute average reward
-        loss = 0 
+        loss = 0
+
+        plot_temp_rewards = 0
+        plot_timesteps = []
+        plot_avg_reward = []
+
         while True:
             state = self.env.reset()
             # State: (80,80,4) --> (1,4,80,80)
@@ -203,6 +219,7 @@ class AgentDQN(Agent):
                 action = self.make_action(state)
                 next_state, reward, done, _ = self.env.step(action.item())
                 total_reward += reward
+                plot_temp_rewards += reward
 
                 # process new state
                 next_state = torch.from_numpy(next_state).permute(2, 0, 1).unsqueeze(0)
@@ -237,7 +254,16 @@ class AgentDQN(Agent):
                       (episodes_done_num, self.steps, self.num_timesteps, total_reward / self.display_freq, loss))
                 total_reward = 0
 
+            # for plotting
+            if episodes_done_num % 30 == 0:
+                plot_timesteps.append(self.steps)
+                plot_avg_reward.append(plot_temp_rewards / 30)
+                plot_temp_rewards = 0
+
             episodes_done_num += 1
             if self.steps > self.num_timesteps:
                 break
         self.save('dqn')
+
+        return plot_timesteps, plot_avg_reward
+
