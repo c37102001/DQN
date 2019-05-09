@@ -31,6 +31,7 @@ class AgentPG(Agent):
                                hidden_dim=128)
         if args.test_pg:
             self.load('pg.cpt')
+        
         # discounted reward
         self.gamma = 0.99 
         
@@ -62,12 +63,9 @@ class AgentPG(Agent):
 
         # state: ndarray array([0.0051,  1.40,  0.519, -0.4636, -0.005, -0.117, 0, 0], dtype=float32)
         state = torch.from_numpy(state).float().unsqueeze(0)
-        # state: tensor([[ 0.0051,  1.4005,  0.5199, -0.4637, -0.0059, -0.1178,  0.0000,  0.0000]])
-        action_probs = self.model.forward(state)
-        # action_probs: tensor([[
-        # 573]], grad_fn=<SoftmaxBackward>)
+        action_probs = self.model.forward(state)    # action_probs: tensor([[0.2631, 0.2631, 0.2166, 0.2573]])
         action_distributions = Categorical(action_probs)  # Categorical(action_probs: torch.Size([1, 4]))
-        action = action_distributions.sample()     # tensor([2])
+        action = action_distributions.sample()      # tensor([2])
         self.action_log_probs.append(action_distributions.log_prob(action))
         return action.item()
 
