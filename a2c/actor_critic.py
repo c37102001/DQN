@@ -2,11 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Categorical
+import ipdb
 
 
 class Flatten(nn.Module):
     def forward(self, x):
         return x.view(x.size(0), -1)
+
 
 class ActorCritic(nn.Module):
     def __init__(self, obs_shape, act_shape, hidden_size, recurrent):
@@ -28,7 +30,7 @@ class ActorCritic(nn.Module):
         )
 
         if self.recurrent:
-            self.rnn =  nn.GRU(hidden_size, hidden_size)
+            self.rnn = nn.GRU(hidden_size, hidden_size)
         
         self.actor = nn.Linear(hidden_size, act_shape)
         self.critic = nn.Linear(hidden_size, 1)
@@ -71,8 +73,25 @@ class ActorCritic(nn.Module):
         # step 1: Unflatten the tensors to (n_steps, n_processes, -1) 
         # step 2: Run a for loop through time to forward rnn
         # step 3: Flatten the outputs
-        # HINT: You must set hidden states to zeros when masks == 0 in the loop 
-       
+        # HINT: You must set hidden states to zeros when masks == 0 in the loop
+
+        # x: [5, 16, 512]
+        # hiddens: [16, 512]
+        # masks: [80, 1]
+        n_processes = hiddens.size(0)
+        hidden_size = hiddens.size(1)
+        n_step = int(x.size(0) / n_processes)
+
+        x = x.view(-1, n_processes, hidden_size)                # [5, 16, 512]
+        masks = masks.view(-1, n_processes, 1)                  # [5, 16, 1]
+        output = torch.Tensor([]).to('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+        for step in range(n_step):
+            hiddens = (hiddens * masks[step]).unsqueeze(0)      # [1, 16, 512]
+            rnn_output, hiddens = self.rnn(x[step].unsqueeze(0), hiddens)
+            output = torch.cat((output, rnn_output), 0)
+        x = output.view(n_step * n_processes, hidden_size)
+        hiddens = hiddens.squeeze(0)
         return x, hiddens
 
     def forward(self, inputs, hiddens, masks):
@@ -86,4 +105,4 @@ class ActorCritic(nn.Module):
         
         return values, action_probs, hiddens
 
-        
+

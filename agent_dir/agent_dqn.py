@@ -5,7 +5,6 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.nn as nn
-import ipdb
 
 from agent_dir.agent import Agent
 from environment import Environment
@@ -87,10 +86,13 @@ class AgentDQN(Agent):
         self.train_freq = 4             # frequency to train the online network
         self.learning_start = 10000     # before we start to update, we wait a few steps first to fill the replay.
         self.batch_size = 32
-        self.num_timesteps = 1000000    # total training steps
+        self.num_timesteps = 200000     # total training steps
         self.display_freq = 10          # frequency to display training progress
-        self.save_freq = 400000         # frequency to save the model
+        self.save_freq = 200000         # frequency to save the model
         self.target_update_freq = 1000  # frequency to update target network
+
+        self.eps_threshold = 0.05
+        self.save_model = True
 
         # optimizer
         self.optimizer = optim.RMSprop(self.online_net.parameters(), lr=1e-4)
@@ -100,17 +102,18 @@ class AgentDQN(Agent):
         # EPS_END = 0.05
         # EPS_DECAY = 200
         # eps_threshold = EPS_END + (EPS_START - EPS_END) * math.exp(-1. * self.steps / EPS_DECAY)
-        if args.train_dqn_exp:
-            if args.dqn_exp == 0:
-                self.eps_threshold = 0
-            if args.dqn_exp == 1:
-                self.eps_threshold = 0.05
-            if args.dqn_exp == 2:
-                self.eps_threshold = 0.05 * math.exp(-1. * (self.steps-10000) / 5000)
-            if args.dqn_exp == 3:
-                self.eps_threshold = 0.05 + (0.9 - 0.05) * math.exp(-1. * (self.steps-10000) / 5000)
-        else:
-            self.eps_threshold = 0.05
+        if hasattr(args, 'train_dqn_exp'):
+            if args.train_dqn_exp:
+                self.num_timesteps = 1000000
+                if args.dqn_exp == 0:
+                    self.eps_threshold = 0
+                if args.dqn_exp == 1:
+                    self.eps_threshold = 0.05
+                if args.dqn_exp == 2:
+                    self.eps_threshold = 0.05 * math.exp(-1. * (self.steps-10000) / 5000)
+                if args.dqn_exp == 3:
+                    self.eps_threshold = 0.05 + (0.9 - 0.05) * math.exp(-1. * (self.steps-10000) / 5000)
+                self.save_model = False
 
     def save(self, save_path):
         print('save model to', save_path)
@@ -244,7 +247,7 @@ class AgentDQN(Agent):
                     self.target_net.load_state_dict(self.online_net.state_dict())
 
                 # save the model
-                if self.steps % self.save_freq == 0:
+                if self.steps % self.save_freq == 0 and self.save_model:
                     self.save('dqn')
 
                 self.steps += 1
@@ -263,7 +266,8 @@ class AgentDQN(Agent):
             episodes_done_num += 1
             if self.steps > self.num_timesteps:
                 break
-        self.save('dqn')
+        if self.save_model:
+            self.save('dqn')
 
         return plot_timesteps, plot_avg_reward
 

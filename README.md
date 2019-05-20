@@ -28,6 +28,18 @@ testing DQN:
 If you want to see your agent playing the game,
 * `$ python3 test.py --test_[pg|dqn] --do_render`
 
+Plot PG figure:
+* `$ python3 plot.py --train_pg`
+
+Train and plot improved PG figure:
+* `$ python3 ./improved_pg/main.py`
+
+Plot DQN figure:
+* `$ python3 plot.py --train_dqn`
+
+Plot four experimental DQN figure:
+* `$ python3 plot.py --train_dqn_exp`
+
 ## Bonus
 Install SuperMarioBros: 
 
